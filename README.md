@@ -20,18 +20,19 @@ someone pings people for a game in `looking-for-game` and then flakes on them.
 
 ## Running it (on your PC)
 
-1. Install Python 3.12 or 3.13.
+This project uses [uv](https://docs.astral.sh/uv/) to manage Python and dependencies.
+The Python version is pinned in `.python-version` and the dependencies live in `pyproject.toml`.
+
+1. Install uv once: `winget install --id=astral-sh.uv -e` (or see the uv docs).
 2. Clone this repo and open a terminal in the folder.
-3. Create a virtual environment and install dependencies:
+3. Install everything — uv creates the environment and installs dependencies for you:
    ```powershell
-   python -m venv venv
-   .\venv\Scripts\Activate.ps1      # Windows PowerShell
-   pip install -r requirements.txt
+   uv sync
    ```
 4. Copy `.env.example` to `.env` and paste your Discord bot token into it.
 5. Start the bot:
    ```powershell
-   python bot.py
+   uv run bot.py
    ```
 
 ## Notes

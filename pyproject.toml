@@ -1,0 +1,14 @@
+[project]
+name = "discord-jebait-bot"
+version = "0.1.0"
+description = "A lighthearted Discord bot that tracks 'jebaits' in the Poogie Bois Dota 2 server."
+requires-python = ">=3.12"
+dependencies = [
+    "discord.py>=2.3",
+    "python-dotenv>=1.0",
+]
+
+# This is a simple script-based app, not an installable library, so tell uv not
+# to try to build/install the project itself — just manage its dependencies.
+[tool.uv]
+package = false
