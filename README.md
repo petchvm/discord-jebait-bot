@@ -21,7 +21,7 @@ never auto-confirm** a jebait (silence proves nothing). No mod has to adjudicate
 
 | Command | Who | What it does |
 |---|---|---|
-| `/jebait user [reason]` | anyone | Put someone on trial — the server votes guilty/innocent. |
+| `/jebait user reason` | anyone | Put someone on trial (reason required) — the server votes guilty/innocent. |
 | `/jebaitcount user` | anyone | Show someone's jebait count. |
 | `/jebaitboard` | anyone | The jebait leaderboard. |
 | `/unjebait user` | mod | Remove someone's most recent jebait. |

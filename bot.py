@@ -47,8 +47,9 @@ intents = discord.Intents.default()
 allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
 
 # In-memory state (resets on restart, which is fine for a casual bot):
-active_jebaits = set()   # user ids currently on trial (one trial at a time each)
-last_accusation = {}     # user id -> epoch time of their last trial (for cooldown)
+active_jebaits = set()    # user ids currently on trial (one trial at a time each)
+last_accusation = {}      # user id -> epoch time of their last trial (for cooldown)
+_pending_timers = set()   # strong refs so timer tasks aren't garbage-collected
 
 
 class JebaitBot(commands.Bot):
@@ -91,16 +92,16 @@ def _fmt_duration(secs):
 class JebaitJuryView(discord.ui.View):
     """A public jury vote — 👍 Guilty / 👎 Innocent, resolved when the window closes."""
 
-    def __init__(self, target: discord.Member, accuser: discord.Member, reason):
+    def __init__(self, origin: discord.Interaction, target: discord.Member,
+                 accuser: discord.Member, reason: str):
         # timeout=None: a View's built-in timeout RESETS on every click, so we run
-        # our own fixed-length timer (see run_timer) instead.
+        # our own fixed-length timer (see start / _run) instead.
         super().__init__(timeout=None)
+        self.origin = origin          # the /jebait interaction — used to edit the message
         self.target = target
         self.accuser = accuser
         self.reason = reason
-        self.message = None
         self.resolved = False
-        self.timer_task = None
         # The accuser's claim IS the first guilty vote.
         self.votes = {accuser.id: "guilty"}
         self.deadline = int(time.time()) + VOTE_WINDOW_SECONDS
@@ -108,6 +109,21 @@ class JebaitJuryView(discord.ui.View):
         self.headline = responses.pick(
             responses.ACCUSATION, accuser=accuser.display_name, target=target.mention
         )
+
+    def start(self):
+        """Kick off the fixed-length voting timer, keeping a strong ref to the task."""
+        print(f"[jury] trial started: {self.accuser.display_name} vs {self.target.display_name} "
+              f"— closes in {VOTE_WINDOW_SECONDS}s")
+        task = asyncio.create_task(self._run())
+        _pending_timers.add(task)
+        task.add_done_callback(_pending_timers.discard)
+
+    async def _run(self):
+        try:
+            await asyncio.sleep(VOTE_WINDOW_SECONDS)
+            await self.resolve()
+        except Exception as e:
+            print(f"[jury] timer error for {self.target.display_name}: {e!r}")
 
     def _tally(self):
         guilty = sum(1 for v in self.votes.values() if v == "guilty")
@@ -144,11 +160,6 @@ class JebaitJuryView(discord.ui.View):
     async def innocent(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._cast(interaction, "innocent")
 
-    async def run_timer(self):
-        """Fixed-length voting window — button clicks do NOT extend it."""
-        await asyncio.sleep(VOTE_WINDOW_SECONDS)
-        await self.resolve()
-
     async def resolve(self):
         if self.resolved:
             return
@@ -159,7 +170,11 @@ class JebaitJuryView(discord.ui.View):
             child.disabled = True
 
         guilty, innocent = self._tally()
-        if guilty - innocent >= VERDICT_THRESHOLD:
+        convicted = guilty - innocent >= VERDICT_THRESHOLD
+        print(f"[jury] verdict for {self.target.display_name}: {guilty}-{innocent} -> "
+              f"{'GUILTY' if convicted else 'ACQUITTED'}")
+
+        if convicted:
             data = storage.load()
             storage.add_jebait(
                 data, target_id=self.target.id, accuser_id=self.accuser.id, reason=self.reason
@@ -176,11 +191,11 @@ class JebaitJuryView(discord.ui.View):
             verdict = responses.pick(responses.VERDICT_ACQUITTED, target=self.target.mention)
             content = f"⚖️ **Verdict: ACQUITTED** — {guilty} to {innocent}\n{verdict}"
 
-        if self.message:
-            try:
-                await self.message.edit(content=content, view=self)
-            except discord.HTTPException:
-                pass
+        # Edit the trial message via the original interaction (token valid ~15 min).
+        try:
+            await self.origin.edit_original_response(content=content, view=self)
+        except discord.HTTPException as e:
+            print(f"[jury] could not edit verdict message: {e!r}")
 
 
 @bot.event
@@ -195,9 +210,9 @@ async def ping(interaction: discord.Interaction):
 
 
 @bot.tree.command(name="jebait", description="Put someone on trial for a jebait (bailing after an LFG ping).")
-@app_commands.describe(user="Who jebaited?", reason="Optional: what did they do?")
+@app_commands.describe(user="Who jebaited?", reason="What did they do? (required)")
 @app_commands.guild_only()
-async def jebait(interaction: discord.Interaction, user: discord.Member, reason: str = None):
+async def jebait(interaction: discord.Interaction, user: discord.Member, reason: str):
     if user.bot:
         await interaction.response.send_message("You can't jebait a bot. We never flake. 🤖", ephemeral=True)
         return
@@ -220,13 +235,15 @@ async def jebait(interaction: discord.Interaction, user: discord.Member, reason:
         )
         return
 
-    # Tidy the optional reason: trim, cap length, treat empty as "no reason".
-    reason = (reason or "").strip()
+    # Reason is required — tidy it and reject an empty/whitespace one.
+    reason = reason.strip()
+    if not reason:
+        await interaction.response.send_message("Give a reason for the jebait.", ephemeral=True)
+        return
     if len(reason) > 500:
         reason = reason[:500] + "…"
-    reason = reason or None
 
-    view = JebaitJuryView(target=user, accuser=interaction.user, reason=reason)
+    view = JebaitJuryView(origin=interaction, target=user, accuser=interaction.user, reason=reason)
     active_jebaits.add(user.id)
     try:
         await interaction.response.send_message(content=view.render(), view=view)
@@ -234,12 +251,7 @@ async def jebait(interaction: discord.Interaction, user: discord.Member, reason:
         active_jebaits.discard(user.id)
         raise
     last_accusation[user.id] = time.time()
-    try:
-        view.message = await interaction.original_response()
-    except discord.HTTPException:
-        view.message = None
-    # Start the fixed-length voting timer (kept referenced so it isn't garbage-collected).
-    view.timer_task = asyncio.create_task(view.run_timer())
+    view.start()
 
 
 @bot.tree.command(name="jebaitcount", description="Show a user's jebait count.")
@@ -302,7 +314,7 @@ async def jebaithelp(interaction: discord.Interaction):
         title="🎣 How Jebait Bot works",
         description=(
             "A **jebait** is when someone pings for a game, gets takers, then flakes.\n\n"
-            "**Call it out:** `/jebait @user [reason]`\n"
+            "**Call it out:** `/jebait @user <reason>`\n"
             "The whole server becomes the **jury** — everyone votes 👍 Guilty / 👎 Innocent "
             f"for {VOTE_WINDOW_SECONDS // 60} minutes. The accusation counts as the first guilty vote.\n"
             f"If guilty leads by **{VERDICT_THRESHOLD}** when time's up, the jebait sticks. "
