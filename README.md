@@ -9,14 +9,15 @@ someone pings people for a game in `looking-for-game` and then flakes on them.
 
 | Command | Who | What it does |
 |---|---|---|
-| `!jebait @user [reason]` | anyone | Accuse someone of a jebait. They get a chance to dispute it. |
-| `!jebaitcount @user` | anyone | Show someone's jebait count. |
-| `!jebaitboard` | anyone | The jebait leaderboard. |
-| `!jebaitdisputes` | anyone | List disputed jebaits waiting on a mod. |
-| `!jebaitresolve <id> confirm\|dismiss` | mod | Settle a disputed jebait. |
-| `!unjebait @user` | mod | Remove someone's most recent jebait. |
-| `!jebaithelp` | anyone | List commands. |
-| `!ping` | anyone | Check the bot is alive. |
+| `/jebait user [reason]` | anyone | Accuse someone of a jebait. They get a chance to dispute it. |
+| `/jebaitcount user` | anyone | Show someone's jebait count. |
+| `/jebaitboard` | anyone | The jebait leaderboard. |
+| `/jebaitdisputes` | anyone | List disputed jebaits waiting on a mod. |
+| `/jebaitresolve id action` | mod | Settle a disputed jebait. |
+| `/unjebait user` | mod | Remove someone's most recent jebait. |
+| `/ping` | anyone | Check the bot is alive. |
+
+Commands are Discord **slash commands** — type `/` in the server to see them all.
 
 ## Running it (on your PC)
 
