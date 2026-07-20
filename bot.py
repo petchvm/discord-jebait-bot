@@ -208,7 +208,7 @@ async def jebait(interaction: discord.Interaction, user: discord.Member, reason:
         if elapsed < COOLDOWN_SECONDS:
             remaining = _fmt_duration(COOLDOWN_SECONDS - elapsed)
             await interaction.response.send_message(
-                f"⏳ {user.mention} was just jebaited — give it {remaining} before the next one.",
+                f"⏳ {user.mention} was just accused of jebaiting — give it {remaining} before the next one.",
                 ephemeral=True,
             )
             return
@@ -369,7 +369,7 @@ async def jebaithelp(interaction: discord.Interaction):
             "Ignoring it counts as confirmed (silence = guilt 🤫).\n\n"
             "**Tallies:** `/jebaitcount @user` · `/jebaitboard`\n"
             "**Disputes:** `/jebaitdisputes` — mods settle with `/jebaitresolve`\n\n"
-            f"You can't jebait the same person twice within {int(COOLDOWN_SECONDS // 60)} minutes."
+            f"You can't accuse the same person twice within {int(COOLDOWN_SECONDS // 60)} minutes."
         ),
         color=discord.Color.orange(),
     )
