@@ -2,7 +2,7 @@
 Jebait Bot — entry point (slash-command edition).
 
 The verdict is a COMMUNITY JURY VOTE. /jebait puts someone on trial: the bot posts
-a message with 👍 Guilty / 👎 Innocent buttons that anyone can press for a short
+a message with 👍 Guilty / 👎 Innocent buttons that anyone can press for a fixed
 window. The accuser's claim counts as the first guilty vote. When the window closes,
 if guilty leads by VERDICT_THRESHOLD the jebait is confirmed (+1); otherwise it's
 acquitted and nothing is recorded.
@@ -15,6 +15,7 @@ Slash commands are registered ("synced") with Discord. GUILD_IDS in .env lists t
 servers to register them in instantly (blank = global, ~1h to appear).
 """
 
+import asyncio
 import os
 import time
 
@@ -34,7 +35,7 @@ TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_IDS = [g.strip() for g in os.getenv("GUILD_IDS", "").split(",") if g.strip()]
 
 # The jury vote.
-VOTE_WINDOW_SECONDS = 120  # how long voting stays open
+VOTE_WINDOW_SECONDS = 120  # how long voting stays open (a FIXED window)
 VERDICT_THRESHOLD = 2      # guilty must lead innocent by this much to convict
 # Anti pile-on: how long before the same person can be put on trial again.
 COOLDOWN_SECONDS = 600     # 10 minutes
@@ -91,11 +92,15 @@ class JebaitJuryView(discord.ui.View):
     """A public jury vote — 👍 Guilty / 👎 Innocent, resolved when the window closes."""
 
     def __init__(self, target: discord.Member, accuser: discord.Member, reason):
-        super().__init__(timeout=VOTE_WINDOW_SECONDS)
+        # timeout=None: a View's built-in timeout RESETS on every click, so we run
+        # our own fixed-length timer (see run_timer) instead.
+        super().__init__(timeout=None)
         self.target = target
         self.accuser = accuser
         self.reason = reason
         self.message = None
+        self.resolved = False
+        self.timer_task = None
         # The accuser's claim IS the first guilty vote.
         self.votes = {accuser.id: "guilty"}
         self.deadline = int(time.time()) + VOTE_WINDOW_SECONDS
@@ -124,6 +129,9 @@ class JebaitJuryView(discord.ui.View):
         )
 
     async def _cast(self, interaction: discord.Interaction, vote: str):
+        if self.resolved:
+            await interaction.response.send_message("Voting has closed on this one.", ephemeral=True)
+            return
         # One vote per person; clicking again changes it.
         self.votes[interaction.user.id] = vote
         await interaction.response.edit_message(content=self.render(), view=self)
@@ -136,7 +144,16 @@ class JebaitJuryView(discord.ui.View):
     async def innocent(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._cast(interaction, "innocent")
 
-    async def on_timeout(self):
+    async def run_timer(self):
+        """Fixed-length voting window — button clicks do NOT extend it."""
+        await asyncio.sleep(VOTE_WINDOW_SECONDS)
+        await self.resolve()
+
+    async def resolve(self):
+        if self.resolved:
+            return
+        self.resolved = True
+        self.stop()  # stop listening for further votes
         active_jebaits.discard(self.target.id)
         for child in self.children:
             child.disabled = True
@@ -221,6 +238,8 @@ async def jebait(interaction: discord.Interaction, user: discord.Member, reason:
         view.message = await interaction.original_response()
     except discord.HTTPException:
         view.message = None
+    # Start the fixed-length voting timer (kept referenced so it isn't garbage-collected).
+    view.timer_task = asyncio.create_task(view.run_timer())
 
 
 @bot.tree.command(name="jebaitcount", description="Show a user's jebait count.")
