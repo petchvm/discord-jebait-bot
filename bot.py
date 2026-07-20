@@ -21,6 +21,7 @@ servers to register them in instantly (blank = global, ~1h to appear).
 
 import asyncio
 import os
+import sys
 import time
 import traceback
 
@@ -31,6 +32,14 @@ from dotenv import load_dotenv
 
 import responses
 import storage
+
+# The Pi's systemd stdout can default to latin-1; force UTF-8 so log prints with
+# non-ASCII characters (dashes, emoji, unicode display names) can't crash the bot.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 # Read config from .env so secrets never live in the code.
 load_dotenv()
@@ -118,7 +127,7 @@ class JebaitJuryView(discord.ui.View):
     def start(self):
         """Kick off the fixed-length voting timer (kept referenced so it isn't GC'd)."""
         print(f"[jury] trial started: {self.accuser.display_name} vs {self.target.display_name} "
-              f"— closes in {VOTE_WINDOW_SECONDS}s", flush=True)
+              f"- closes in {VOTE_WINDOW_SECONDS}s", flush=True)
         try:
             task = asyncio.create_task(self._run())
             _pending_timers.add(task)
