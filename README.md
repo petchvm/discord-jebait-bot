@@ -24,6 +24,7 @@ never auto-confirm** a jebait (silence proves nothing). No mod has to adjudicate
 | `/jebait user reason` | anyone | Put someone on trial (reason required) — the server votes guilty/innocent. |
 | `/jebaitcount user` | anyone | Show someone's jebait count. |
 | `/jebaitboard` | anyone | The jebait leaderboard. |
+| `/jebaithistory user` | anyone | Show someone's past jebaits (reasons + dates). |
 | `/unjebait user` | mod | Remove someone's most recent jebait. |
 | `/jebaithelp` | anyone | Explains how the jebait system works. |
 | `/ping` | anyone | Check the bot is alive. |

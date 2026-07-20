@@ -23,6 +23,7 @@ import os
 import sys
 import time
 import traceback
+from datetime import datetime
 
 import discord
 from discord import app_commands
@@ -112,6 +113,14 @@ def _guilty_penalty(net):
     if net >= 4:
         return 2
     return 1
+
+
+def _ts(iso):
+    """Stored ISO timestamp -> a Discord relative time like '3 days ago'."""
+    try:
+        return f"<t:{int(datetime.fromisoformat(iso).timestamp())}:R>"
+    except Exception:
+        return "some time ago"
 
 
 class JebaitJuryView(discord.ui.View):
@@ -336,6 +345,36 @@ async def jebaitboard(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
+@bot.tree.command(name="jebaithistory", description="Show a user's past jebaits (reasons + dates).")
+@app_commands.describe(user="Whose history?")
+@app_commands.guild_only()
+async def jebaithistory(interaction: discord.Interaction, user: discord.Member):
+    data = storage.load()
+    incidents = storage.history(data, user.id)
+    total = storage.confirmed_count(data, user.id)
+    if not incidents:
+        await interaction.response.send_message(f"**{user.display_name}** has a clean record.")
+        return
+
+    shown = incidents[:15]
+    lines = []
+    for inc in shown:
+        pts = inc.get("points", 1)
+        pts_str = f"  (+{pts})" if pts > 1 else ""
+        reason = discord.utils.escape_markdown(inc.get("reason") or "no reason given")
+        lines.append(f"**#{inc['id']}** · {_ts(inc['timestamp'])}{pts_str}\n> {reason}")
+    if len(incidents) > len(shown):
+        lines.append(f"…and {len(incidents) - len(shown)} more.")
+
+    embed = discord.Embed(
+        title=f"⚖️ {user.display_name}'s jebait history",
+        description="\n".join(lines),
+        color=discord.Color.orange(),
+    )
+    embed.set_footer(text=f"Total: {total}")
+    await interaction.response.send_message(embed=embed)
+
+
 @bot.tree.command(name="unjebait", description="(Mod) Remove someone's most recent jebait.")
 @app_commands.describe(user="Whose most recent jebait to remove")
 @app_commands.default_permissions(manage_messages=True)
@@ -369,7 +408,7 @@ async def jebaithelp(interaction: discord.Interaction):
             "minutes. The accusation is the first guilty vote.\n"
             f"If Guilty leads by **{VERDICT_THRESHOLD}** at the end, the jebait sticks (a lopsided "
             "verdict counts for more than one). Being offline can't convict you; only real votes do.\n\n"
-            "**Tallies:** `/jebaitcount @user`, `/jebaitboard`\n"
+            "**Tallies:** `/jebaitcount @user`, `/jebaitboard`, `/jebaithistory @user`\n"
             "**Mods** can undo a bad verdict with `/unjebait @user`.\n\n"
             f"You can't accuse the same person twice within {COOLDOWN_SECONDS // 60} minutes."
         ),

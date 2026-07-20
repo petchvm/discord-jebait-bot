@@ -104,3 +104,14 @@ def remove_latest_confirmed(data, user_id):
     latest = max(confirmed, key=lambda i: i["timestamp"])
     rec["incidents"].remove(latest)
     return latest
+
+
+def history(data, user_id):
+    """Return a user's confirmed incidents, most recent first."""
+    uid = str(user_id)
+    rec = data["users"].get(uid)
+    if not rec:
+        return []
+    confirmed = [i for i in rec["incidents"] if i["status"] == "confirmed"]
+    confirmed.sort(key=lambda i: i["timestamp"], reverse=True)
+    return confirmed
