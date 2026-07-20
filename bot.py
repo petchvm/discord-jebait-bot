@@ -27,7 +27,9 @@ import storage
 # Read config from .env so secrets never live in the code.
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-TEST_GUILD_ID = os.getenv("TEST_GUILD_ID")
+# Comma-separated guild IDs to register commands in instantly (test server,
+# Poogie Bois, ...). Blank = register globally (works everywhere, ~1h to appear).
+GUILD_IDS = [g.strip() for g in os.getenv("GUILD_IDS", "").split(",") if g.strip()]
 
 # How long the accused has to respond before silence counts as confirmed.
 DISPUTE_WINDOW_SECONDS = 60
@@ -48,11 +50,12 @@ class JebaitBot(commands.Bot):
     async def setup_hook(self):
         """Runs once on startup — registers the slash commands with Discord."""
         try:
-            if TEST_GUILD_ID:
-                guild = discord.Object(id=int(TEST_GUILD_ID))
-                self.tree.copy_global_to(guild=guild)
-                synced = await self.tree.sync(guild=guild)
-                print(f"Synced {len(synced)} slash commands to test guild {TEST_GUILD_ID}.")
+            if GUILD_IDS:
+                for gid in GUILD_IDS:
+                    guild = discord.Object(id=int(gid))
+                    self.tree.copy_global_to(guild=guild)
+                    synced = await self.tree.sync(guild=guild)
+                    print(f"Synced {len(synced)} slash commands to guild {gid}.")
             else:
                 synced = await self.tree.sync()
                 print(f"Synced {len(synced)} slash commands globally (can take ~1h to appear).")
