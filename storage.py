@@ -124,3 +124,27 @@ def list_disputes(data):
                 out.append((uid, inc))
     out.sort(key=lambda pair: pair[1]["id"])
     return out
+
+
+def last_incident_time(data, user_id):
+    """Return the datetime of the user's most recent incident, or None."""
+    uid = str(user_id)
+    rec = data["users"].get(uid)
+    if not rec or not rec["incidents"]:
+        return None
+    latest = max(rec["incidents"], key=lambda i: i["timestamp"])
+    return datetime.fromisoformat(latest["timestamp"])
+
+
+def remove_latest_confirmed(data, user_id):
+    """Remove and return the user's most recent CONFIRMED incident, or None."""
+    uid = str(user_id)
+    rec = data["users"].get(uid)
+    if not rec:
+        return None
+    confirmed = [i for i in rec["incidents"] if i["status"] == "confirmed"]
+    if not confirmed:
+        return None
+    latest = max(confirmed, key=lambda i: i["timestamp"])
+    rec["incidents"].remove(latest)
+    return latest

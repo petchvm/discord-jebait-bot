@@ -1,12 +1,11 @@
 """
 Jebait Bot — entry point (slash-command edition).
 
-Milestone 3: the dispute flow. /jebait posts a message with [Dispute ❌] and
-[Fair cop ✅] buttons and a 60-second timer. Staying silent or clicking ✅ confirms
-the jebait; clicking ❌ freezes it as "disputed" until a mod resolves it with
-/jebaitresolve. /jebaitdisputes lists the frozen ones.
+Milestone 4: polish. Adds a cooldown (no re-jebaiting someone too soon, and no
+double-accusing while one is pending), a mod-only /unjebait to remove a tally,
+randomised cheeky replies (see responses.py), and a /jebaithelp explainer.
 
-Nothing is saved until the accusation resolves, so a bot restart mid-window just
+Nothing is saved until an accusation resolves, so a bot restart mid-window just
 cancels that one accusation.
 
 Slash commands are registered ("synced") with Discord. If TEST_GUILD_ID is set in
@@ -14,7 +13,7 @@ Slash commands are registered ("synced") with Discord. If TEST_GUILD_ID is set i
 """
 
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Literal
 
 import discord
@@ -22,6 +21,7 @@ from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
+import responses
 import storage
 
 # Read config from .env so secrets never live in the code.
@@ -31,12 +31,17 @@ TEST_GUILD_ID = os.getenv("TEST_GUILD_ID")
 
 # How long the accused has to respond before silence counts as confirmed.
 DISPUTE_WINDOW_SECONDS = 60
+# How long before the same person can be jebaited again (anti pile-on).
+COOLDOWN_SECONDS = 600  # 10 minutes
 
 # Slash commands don't read message text, so NO privileged intents are needed.
 intents = discord.Intents.default()
 
 # Safety: never let echoed text (like a reason) ping @everyone/@here or roles.
 allowed_mentions = discord.AllowedMentions(everyone=False, roles=False, users=True)
+
+# User ids that currently have an accusation awaiting a response (in memory only).
+active_jebaits = set()
 
 
 class JebaitBot(commands.Bot):
@@ -62,6 +67,17 @@ bot = JebaitBot(command_prefix="!", intents=intents, allowed_mentions=allowed_me
 def _s(n):
     """Return 's' unless n is 1 — for simple pluralising."""
     return "" if n == 1 else "s"
+
+
+def _fmt_duration(secs):
+    """Format a number of seconds as e.g. '9m 30s'."""
+    secs = max(int(secs), 0)
+    m, s = divmod(secs, 60)
+    if m and s:
+        return f"{m}m {s}s"
+    if m:
+        return f"{m}m"
+    return f"{s}s"
 
 
 def _relative_ts(iso):
@@ -92,6 +108,9 @@ class JebaitView(discord.ui.View):
             return False
         return True
 
+    def _cleanup(self):
+        active_jebaits.discard(self.target.id)
+
     def _disable_buttons(self):
         for child in self.children:
             child.disabled = True
@@ -113,47 +132,42 @@ class JebaitView(discord.ui.View):
     def _reason_line(self):
         return f"\n> {self.reason}" if self.reason else ""
 
+    def _confirmed_suffix(self, count):
+        return f"\nThat's **{count}** jebait{_s(count)} now."
+
     @discord.ui.button(label="Dispute", emoji="❌", style=discord.ButtonStyle.danger)
     async def dispute(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.resolved = True
         self.stop()
+        self._cleanup()
         self._disable_buttons()
         incident, _ = self._record("disputed")
-        await interaction.response.edit_message(
-            content=(
-                f"🧊 {self.target.mention} **disputes** this jebait!{self._reason_line()}\n"
-                f"Frozen as disputed (**#{incident['id']}**). A mod can settle it with `/jebaitresolve`."
-            ),
-            view=self,
-        )
+        text = responses.pick(responses.DISPUTED, target=self.target.mention, id=incident["id"])
+        await interaction.response.edit_message(content=text + self._reason_line(), view=self)
 
     @discord.ui.button(label="Fair cop", emoji="✅", style=discord.ButtonStyle.success)
     async def fair_cop(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.resolved = True
         self.stop()
+        self._cleanup()
         self._disable_buttons()
         _, count = self._record("confirmed")
+        text = responses.pick(responses.CONFIRMED_OWNED, target=self.target.mention)
         await interaction.response.edit_message(
-            content=(
-                f"🎣 {self.target.mention} owned up — **jebait confirmed**. 🫡{self._reason_line()}\n"
-                f"That's **{count}** jebait{_s(count)} now."
-            ),
-            view=self,
+            content=text + self._reason_line() + self._confirmed_suffix(count), view=self
         )
 
     async def on_timeout(self):
         if self.resolved:
             return
+        self._cleanup()
         self._disable_buttons()
         _, count = self._record("confirmed")
         if self.message:
             try:
+                text = responses.pick(responses.CONFIRMED_SILENCE, target=self.target.mention)
                 await self.message.edit(
-                    content=(
-                        f"🎣 {self.target.mention} stayed silent... **jebait confirmed**. 🤫{self._reason_line()}\n"
-                        f"That's **{count}** jebait{_s(count)} now."
-                    ),
-                    view=self,
+                    content=text + self._reason_line() + self._confirmed_suffix(count), view=self
                 )
             except discord.HTTPException:
                 pass
@@ -180,21 +194,45 @@ async def jebait(interaction: discord.Interaction, user: discord.Member, reason:
     if user.id == interaction.user.id:
         await interaction.response.send_message("You can't jebait yourself. Nice try. 😅", ephemeral=True)
         return
+    if user.id in active_jebaits:
+        await interaction.response.send_message(
+            f"{user.mention} already has a jebait pending — let it play out first. ⏳", ephemeral=True
+        )
+        return
 
+    # Cooldown: block re-accusing the same person too soon after their last incident.
+    data = storage.load()
+    last = storage.last_incident_time(data, user.id)
+    if last is not None:
+        elapsed = (datetime.now(timezone.utc) - last).total_seconds()
+        if elapsed < COOLDOWN_SECONDS:
+            remaining = _fmt_duration(COOLDOWN_SECONDS - elapsed)
+            await interaction.response.send_message(
+                f"⏳ {user.mention} was just jebaited — give it {remaining} before the next one.",
+                ephemeral=True,
+            )
+            return
+
+    # Tidy the optional reason: trim, cap length, treat empty as "no reason".
     reason = (reason or "").strip()
     if len(reason) > 500:
         reason = reason[:500] + "…"
     reason = reason or None
 
     view = JebaitView(target=user, accuser=interaction.user, reason=reason)
+    text = responses.pick(responses.ACCUSATION, accuser=interaction.user.display_name, target=user.mention)
     reason_line = f"\n> {reason}" if reason else ""
-    await interaction.response.send_message(
-        content=(
-            f"🎣 **{interaction.user.display_name}** accuses {user.mention} of a jebait!{reason_line}\n"
-            f"{user.mention}, you've got **{DISPUTE_WINDOW_SECONDS}s** — own up, or dispute it."
-        ),
-        view=view,
+    content = (
+        f"{text}{reason_line}\n"
+        f"{user.mention}, you've got **{DISPUTE_WINDOW_SECONDS}s** — own up, or dispute it."
     )
+
+    active_jebaits.add(user.id)
+    try:
+        await interaction.response.send_message(content=content, view=view)
+    except Exception:
+        active_jebaits.discard(user.id)
+        raise
     try:
         view.message = await interaction.original_response()
     except discord.HTTPException:
@@ -295,6 +333,47 @@ async def jebaitresolve(
         await interaction.response.send_message(
             f"🗑️ Dispute **#{incident_id}** dismissed by {interaction.user.display_name}. That jebait is gone."
         )
+
+
+@bot.tree.command(name="unjebait", description="(Mod) Remove someone's most recent jebait.")
+@app_commands.describe(user="Whose most recent jebait to remove")
+@app_commands.default_permissions(manage_messages=True)
+@app_commands.checks.has_permissions(manage_messages=True)
+@app_commands.guild_only()
+async def unjebait(interaction: discord.Interaction, user: discord.Member):
+    data = storage.load()
+    removed = storage.remove_latest_confirmed(data, user.id)
+    if removed is None:
+        await interaction.response.send_message(
+            f"{user.display_name} has no jebaits to remove.", ephemeral=True
+        )
+        return
+    storage.save(data)
+    count = storage.confirmed_count(data, user.id)
+    await interaction.response.send_message(
+        f"↩️ {interaction.user.display_name} wiped a jebait off {user.mention} "
+        f"(#{removed['id']}). Back down to **{count}** jebait{_s(count)}."
+    )
+
+
+@bot.tree.command(name="jebaithelp", description="How the jebait system works.")
+async def jebaithelp(interaction: discord.Interaction):
+    embed = discord.Embed(
+        title="🎣 How Jebait Bot works",
+        description=(
+            "A **jebait** is when someone pings for a game, gets takers, then flakes.\n\n"
+            "**Call it out:** `/jebait @user [reason]`\n"
+            "The accused gets **60 seconds** and two buttons:\n"
+            "• **✅ Fair cop** — admits it, jebait confirmed\n"
+            "• **❌ Dispute** — freezes it for a mod to judge\n"
+            "Ignoring it counts as confirmed (silence = guilt 🤫).\n\n"
+            "**Tallies:** `/jebaitcount @user` · `/jebaitboard`\n"
+            "**Disputes:** `/jebaitdisputes` — mods settle with `/jebaitresolve`\n\n"
+            f"You can't jebait the same person twice within {int(COOLDOWN_SECONDS // 60)} minutes."
+        ),
+        color=discord.Color.orange(),
+    )
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
 @bot.tree.error

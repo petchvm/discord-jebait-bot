@@ -15,6 +15,7 @@ someone pings people for a game in `looking-for-game` and then flakes on them.
 | `/jebaitdisputes` | anyone | List disputed jebaits waiting on a mod. |
 | `/jebaitresolve id action` | mod | Settle a disputed jebait. |
 | `/unjebait user` | mod | Remove someone's most recent jebait. |
+| `/jebaithelp` | anyone | Explains how the jebait system works. |
 | `/ping` | anyone | Check the bot is alive. |
 
 Commands are Discord **slash commands** — type `/` in the server to see them all.
