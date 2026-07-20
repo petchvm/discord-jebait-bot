@@ -16,25 +16,18 @@ ACCUSATION = [
     "🎣 Uh oh — **{accuser}** reckons {target} baited and ghosted!",
 ]
 
-# {target} = mention  (accused clicked "Fair cop")
-CONFIRMED_OWNED = [
-    "🫡 {target} owned up — **jebait confirmed**.",
-    "🫡 Respect the honesty — {target} admits it. **Confirmed**.",
-    "🫡 {target} takes the L like a champ. **Jebait confirmed**.",
+# {target} = mention  (the jury voted guilty)
+VERDICT_GUILTY = [
+    "🔨 The jury has spoken — {target} is **guilty**.",
+    "🔨 {target} is going down. **Guilty** as charged.",
+    "🔨 Case closed: {target} **jebaited**, and the server saw it.",
 ]
 
-# {target} = mention  (accused stayed silent for the full window)
-CONFIRMED_SILENCE = [
-    "🤫 {target} went quiet... **jebait confirmed**. Silence speaks.",
-    "🤫 Not a peep from {target} — **confirmed**. The guilty say nothing.",
-    "🤫 {target} left it on read. **Jebait confirmed**.",
-]
-
-# {target} = mention, {id} = incident id  (accused clicked "Dispute")
-DISPUTED = [
-    "🧊 {target} **disputes** it! Frozen as **#{id}** for a mod to judge.",
-    "🧊 Not so fast — {target} contests this. Frozen as **#{id}**.",
-    "🧊 {target} pleads innocent! Frozen as **#{id}** until a mod rules.",
+# {target} = mention  (not enough votes to convict)
+VERDICT_ACQUITTED = [
+    "🕊️ {target} walks free — not enough to convict.",
+    "🕊️ The jury isn't buying it. {target} is **acquitted**.",
+    "🕊️ Case dismissed. {target} lives to bait another day.",
 ]
 
 

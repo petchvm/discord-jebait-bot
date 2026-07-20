@@ -3,27 +3,22 @@ storage.py — tiny JSON-file data layer for the jebait bot.
 
 All state lives in one dict saved to data.json (kept right next to this file).
 Saves are ATOMIC: we write to a temporary file first, then os.replace() swaps it
-in as a single operation. That way a crash mid-write can never leave a
-half-written, corrupt data.json.
+in as a single operation, so a crash mid-write can never corrupt data.json.
 
-The shape of the data:
+Shape:
 {
-  "next_id": 7,                 # counter for unique incident ids
+  "next_id": 7,
   "users": {
     "<discord_user_id>": {
       "incidents": [
-        {
-          "id": 1,
-          "accuser_id": "<id>",
-          "reason": "flaked on turbo" | null,
-          "timestamp": "2026-07-20T14:03:00+00:00",
-          "status": "confirmed"   # "confirmed" or "disputed"
-        }
+        {"id": 1, "accuser_id": "<id>", "reason": "flaked on turbo" | null,
+         "timestamp": "2026-07-20T14:03:00+00:00", "status": "confirmed"}
       ]
     }
   }
 }
-A user's "count" is simply how many of their incidents are "confirmed".
+Only confirmed jebaits are ever stored — the jury vote happens in memory, and an
+acquittal saves nothing. A user's count is how many confirmed incidents they have.
 """
 
 import json
@@ -65,15 +60,15 @@ def _user(data, user_id):
     return data["users"][uid]
 
 
-def add_jebait(data, target_id, accuser_id, reason, status="confirmed"):
-    """Add a jebait incident to a user and return the created incident dict."""
+def add_jebait(data, target_id, accuser_id, reason):
+    """Add a confirmed jebait incident to a user and return it."""
     user = _user(data, target_id)
     incident = {
         "id": data["next_id"],
         "accuser_id": str(accuser_id),
         "reason": reason,
         "timestamp": datetime.now(timezone.utc).isoformat(),
-        "status": status,
+        "status": "confirmed",
     }
     data["next_id"] += 1
     user["incidents"].append(incident)
@@ -81,7 +76,7 @@ def add_jebait(data, target_id, accuser_id, reason, status="confirmed"):
 
 
 def confirmed_count(data, user_id):
-    """Number of CONFIRMED jebaits for a user."""
+    """Number of confirmed jebaits for a user."""
     uid = str(user_id)
     if uid not in data["users"]:
         return 0
@@ -96,48 +91,8 @@ def leaderboard(data, limit=10):
     return counts[:limit]
 
 
-def find_incident(data, incident_id):
-    """Return (user_id, incident_dict) for the given id, or (None, None)."""
-    for uid, rec in data["users"].items():
-        for inc in rec["incidents"]:
-            if inc["id"] == incident_id:
-                return uid, inc
-    return None, None
-
-
-def remove_incident(data, incident_id):
-    """Delete an incident by id. Returns True if something was removed."""
-    for rec in data["users"].values():
-        for i, inc in enumerate(rec["incidents"]):
-            if inc["id"] == incident_id:
-                del rec["incidents"][i]
-                return True
-    return False
-
-
-def list_disputes(data):
-    """Return [(user_id, incident), ...] for all disputed incidents, oldest id first."""
-    out = []
-    for uid, rec in data["users"].items():
-        for inc in rec["incidents"]:
-            if inc["status"] == "disputed":
-                out.append((uid, inc))
-    out.sort(key=lambda pair: pair[1]["id"])
-    return out
-
-
-def last_incident_time(data, user_id):
-    """Return the datetime of the user's most recent incident, or None."""
-    uid = str(user_id)
-    rec = data["users"].get(uid)
-    if not rec or not rec["incidents"]:
-        return None
-    latest = max(rec["incidents"], key=lambda i: i["timestamp"])
-    return datetime.fromisoformat(latest["timestamp"])
-
-
 def remove_latest_confirmed(data, user_id):
-    """Remove and return the user's most recent CONFIRMED incident, or None."""
+    """Remove and return the user's most recent confirmed incident, or None."""
     uid = str(user_id)
     rec = data["users"].get(uid)
     if not rec:

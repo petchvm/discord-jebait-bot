@@ -9,11 +9,9 @@ someone pings people for a game in `looking-for-game` and then flakes on them.
 
 | Command | Who | What it does |
 |---|---|---|
-| `/jebait user [reason]` | anyone | Accuse someone of a jebait. They get a chance to dispute it. |
+| `/jebait user [reason]` | anyone | Put someone on trial — the server votes guilty/innocent. |
 | `/jebaitcount user` | anyone | Show someone's jebait count. |
 | `/jebaitboard` | anyone | The jebait leaderboard. |
-| `/jebaitdisputes` | anyone | List disputed jebaits waiting on a mod. |
-| `/jebaitresolve id action` | mod | Settle a disputed jebait. |
 | `/unjebait user` | mod | Remove someone's most recent jebait. |
 | `/jebaithelp` | anyone | Explains how the jebait system works. |
 | `/ping` | anyone | Check the bot is alive. |
