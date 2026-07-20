@@ -17,7 +17,7 @@ The shape of the data:
           "accuser_id": "<id>",
           "reason": "flaked on turbo" | null,
           "timestamp": "2026-07-20T14:03:00+00:00",
-          "status": "confirmed"   # later also "disputed"
+          "status": "confirmed"   # "confirmed" or "disputed"
         }
       ]
     }
@@ -94,3 +94,33 @@ def leaderboard(data, limit=10):
     counts = [(uid, c) for uid, c in counts if c > 0]
     counts.sort(key=lambda pair: pair[1], reverse=True)
     return counts[:limit]
+
+
+def find_incident(data, incident_id):
+    """Return (user_id, incident_dict) for the given id, or (None, None)."""
+    for uid, rec in data["users"].items():
+        for inc in rec["incidents"]:
+            if inc["id"] == incident_id:
+                return uid, inc
+    return None, None
+
+
+def remove_incident(data, incident_id):
+    """Delete an incident by id. Returns True if something was removed."""
+    for rec in data["users"].values():
+        for i, inc in enumerate(rec["incidents"]):
+            if inc["id"] == incident_id:
+                del rec["incidents"][i]
+                return True
+    return False
+
+
+def list_disputes(data):
+    """Return [(user_id, incident), ...] for all disputed incidents, oldest id first."""
+    out = []
+    for uid, rec in data["users"].items():
+        for inc in rec["incidents"]:
+            if inc["status"] == "disputed":
+                out.append((uid, inc))
+    out.sort(key=lambda pair: pair[1]["id"])
+    return out
