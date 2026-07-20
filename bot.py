@@ -2,17 +2,17 @@
 Jebait Bot — entry point (slash-command edition).
 
 The verdict is a COMMUNITY JURY VOTE. /jebait puts someone on trial: the bot posts
-a message with 👍 Guilty / 👎 Innocent buttons that anyone can press for a fixed
-window. The accuser's claim counts as the first guilty vote. When the window closes,
-if guilty leads by VERDICT_THRESHOLD the jebait is confirmed (+1); otherwise it's
-acquitted and nothing is recorded.
+a message with Guilty / Innocent buttons that anyone can press for a fixed window.
+The accuser's claim counts as the first guilty vote. When the window closes, if
+guilty leads by VERDICT_THRESHOLD the jebait is confirmed; a lopsided guilty verdict
+counts for more than one. Otherwise it's acquitted and nothing is recorded.
 
 Timing: a single background loop (`trial_resolver`) ticks every few seconds and
 resolves any trial whose deadline has passed. This is far more robust than a
 per-trial timer — one loop, owned by the bot, that can't be garbage-collected.
 
 Why a jury (not the accused's silence + a mod):
-- Being offline can never auto-confirm a jebait — only real votes do.
+- Being offline can never auto-confirm a jebait; only real votes do.
 - No mod has to adjudicate; the people who got left hanging decide.
 
 Slash commands are registered ("synced") with Discord. GUILD_IDS in .env lists the
@@ -105,8 +105,17 @@ def _fmt_duration(secs):
     return f"{s}s"
 
 
+def _guilty_penalty(net):
+    """How many jebaits a guilty verdict adds. A bigger guilty margin hits harder."""
+    if net >= 6:
+        return 3
+    if net >= 4:
+        return 2
+    return 1
+
+
 class JebaitJuryView(discord.ui.View):
-    """A public jury vote — 👍 Guilty / 👎 Innocent. Resolved by the trial_resolver loop."""
+    """A public jury vote — Guilty / Innocent. Resolved by the trial_resolver loop."""
 
     def __init__(self, target: discord.Member, accuser: discord.Member, reason: str):
         super().__init__(timeout=None)  # resolution is handled by the background loop
@@ -116,7 +125,7 @@ class JebaitJuryView(discord.ui.View):
         self.message = None          # the trial message, for editing on resolve
         self.resolved = False
         self.votes = {accuser.id: "guilty"}   # user_id -> "guilty" | "innocent"
-        self.names = {accuser.id: discord.utils.escape_markdown(accuser.display_name)}  # for showing who voted
+        self.names = {accuser.id: discord.utils.escape_markdown(accuser.display_name)}
         self.deadline = time.time() + VOTE_WINDOW_SECONDS
         self.headline = responses.pick(
             responses.ACCUSATION,
@@ -141,11 +150,10 @@ class JebaitJuryView(discord.ui.View):
         """The live voting message (updates as people vote)."""
         guilty, innocent = self._tally()
         return (
-            f"⚖️ **The jury is out!**\n"
-            f"{self.headline}{self._reason_line()}\n"
-            f"**{VOTE_WINDOW_SECONDS // 60} minutes** to vote — guilty must lead by {VERDICT_THRESHOLD} to convict.\n\n"
-            f"👍 **Guilty ({guilty}):** {self._voters('guilty')}\n"
-            f"👎 **Innocent ({innocent}):** {self._voters('innocent')}"
+            f"⚖️ {self.headline}{self._reason_line()}\n"
+            f"{VOTE_WINDOW_SECONDS // 60} minutes to vote. Guilty must lead by {VERDICT_THRESHOLD} to convict.\n\n"
+            f"**Guilty ({guilty}):** {self._voters('guilty')}\n"
+            f"**Innocent ({innocent}):** {self._voters('innocent')}"
         )
 
     async def _cast(self, interaction: discord.Interaction, vote: str):
@@ -157,11 +165,11 @@ class JebaitJuryView(discord.ui.View):
         self.names[interaction.user.id] = discord.utils.escape_markdown(interaction.user.display_name)
         await interaction.response.edit_message(content=self.render(), view=self)
 
-    @discord.ui.button(label="Guilty", emoji="👍", style=discord.ButtonStyle.danger)
+    @discord.ui.button(label="Guilty", style=discord.ButtonStyle.danger)
     async def guilty(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._cast(interaction, "guilty")
 
-    @discord.ui.button(label="Innocent", emoji="👎", style=discord.ButtonStyle.success)
+    @discord.ui.button(label="Innocent", style=discord.ButtonStyle.success)
     async def innocent(self, interaction: discord.Interaction, button: discord.ui.Button):
         await self._cast(interaction, "innocent")
 
@@ -175,31 +183,31 @@ class JebaitJuryView(discord.ui.View):
             child.disabled = True
 
         guilty, innocent = self._tally()
-        convicted = guilty - innocent >= VERDICT_THRESHOLD
+        net = guilty - innocent
+        convicted = net >= VERDICT_THRESHOLD
         print(f"[jury] resolving {self.target.display_name}: {guilty}-{innocent} -> "
               f"{'GUILTY' if convicted else 'ACQUITTED'}", flush=True)
 
-        breakdown = f"👍 {self._voters('guilty')}\n👎 {self._voters('innocent')}"
+        breakdown = f"Guilty: {self._voters('guilty')}\nInnocent: {self._voters('innocent')}"
         if convicted:
+            points = _guilty_penalty(net)
             data = storage.load()
             storage.add_jebait(
-                data, target_id=self.target.id, accuser_id=self.accuser.id, reason=self.reason
+                data, target_id=self.target.id, accuser_id=self.accuser.id,
+                reason=self.reason, points=points,
             )
             storage.save(data)
             count = storage.confirmed_count(data, self.target.id)
             verdict = responses.pick(responses.VERDICT_GUILTY, target=self.target.mention)
             content = (
-                f"⚖️ **Verdict: GUILTY** — {guilty} to {innocent}\n"
+                f"⚖️ **Verdict: GUILTY** ({guilty} to {innocent})\n"
                 f"{verdict}{self._reason_line()}\n"
                 f"{breakdown}\n"
-                f"That's **{count}** jebait{_s(count)} now."
+                f"+{points} jebait{_s(points)}. Now at **{count}**."
             )
         else:
             verdict = responses.pick(responses.VERDICT_ACQUITTED, target=self.target.mention)
-            content = (
-                f"⚖️ **Verdict: ACQUITTED** — {guilty} to {innocent}\n"
-                f"{verdict}\n{breakdown}"
-            )
+            content = f"⚖️ **Verdict: ACQUITTED** ({guilty} to {innocent})\n{verdict}\n{breakdown}"
 
         if self.message is None:
             print("[jury] no message handle — can't update the trial message", flush=True)
@@ -240,7 +248,7 @@ async def on_ready():
 
 @bot.tree.command(name="ping", description="Check the bot is alive.")
 async def ping(interaction: discord.Interaction):
-    await interaction.response.send_message("pong 🏓")
+    await interaction.response.send_message("pong")
 
 
 @bot.tree.command(name="jebait", description="Put someone on trial for a jebait (bailing after an LFG ping).")
@@ -248,14 +256,14 @@ async def ping(interaction: discord.Interaction):
 @app_commands.guild_only()
 async def jebait(interaction: discord.Interaction, user: discord.Member, reason: str):
     if user.bot:
-        await interaction.response.send_message("You can't jebait a bot. We never flake. 🤖", ephemeral=True)
+        await interaction.response.send_message("You can't jebait a bot. We never flake.", ephemeral=True)
         return
     if user.id == interaction.user.id:
-        await interaction.response.send_message("You can't jebait yourself. Nice try. 😅", ephemeral=True)
+        await interaction.response.send_message("You can't jebait yourself. Nice try.", ephemeral=True)
         return
     if user.id in active_jebaits:
         await interaction.response.send_message(
-            f"{user.mention} is already on trial — let the jury finish first. ⚖️", ephemeral=True
+            f"{user.mention} is already on trial. Let the jury finish first.", ephemeral=True
         )
         return
 
@@ -264,7 +272,7 @@ async def jebait(interaction: discord.Interaction, user: discord.Member, reason:
     if elapsed < COOLDOWN_SECONDS:
         remaining = _fmt_duration(COOLDOWN_SECONDS - elapsed)
         await interaction.response.send_message(
-            f"⏳ {user.mention} was just accused of jebaiting — give it {remaining} before the next one.",
+            f"{user.mention} was just accused of jebaiting. Wait {remaining} before the next one.",
             ephemeral=True,
         )
         return
@@ -310,18 +318,18 @@ async def jebaitboard(interaction: discord.Interaction):
     data = storage.load()
     board = storage.leaderboard(data, limit=10)
     if not board:
-        await interaction.response.send_message("No jebaits recorded yet. A spotless server... for now. 😇")
+        await interaction.response.send_message("No jebaits recorded yet. A spotless server, for now.")
         return
 
     medals = ["🥇", "🥈", "🥉"]
     lines = []
     for rank, (uid, count) in enumerate(board):
-        marker = medals[rank] if rank < 3 else f"**{rank + 1}.**"
+        marker = medals[rank] if rank < 3 else f"{rank + 1}."
         # Mentions inside an embed show the name but never ping.
-        lines.append(f"{marker} <@{uid}> — **{count}** jebait{_s(count)}")
+        lines.append(f"{marker} <@{uid}> · **{count}**")
 
     embed = discord.Embed(
-        title="🎣 Jebait Leaderboard",
+        title="⚖️ Jebait Leaderboard",
         description="\n".join(lines),
         color=discord.Color.orange(),
     )
@@ -343,26 +351,27 @@ async def unjebait(interaction: discord.Interaction, user: discord.Member):
         return
     storage.save(data)
     count = storage.confirmed_count(data, user.id)
+    pts = removed.get("points", 1)
     await interaction.response.send_message(
-        f"↩️ {interaction.user.display_name} wiped a jebait off {user.mention} "
-        f"(#{removed['id']}). Back down to **{count}** jebait{_s(count)}."
+        f"{interaction.user.display_name} cleared jebait #{removed['id']} from {user.mention} "
+        f"(-{pts}). Now at **{count}**."
     )
 
 
 @bot.tree.command(name="jebaithelp", description="How the jebait system works.")
 async def jebaithelp(interaction: discord.Interaction):
     embed = discord.Embed(
-        title="🎣 How Jebait Bot works",
+        title="⚖️ How Jebait Bot works",
         description=(
             "A **jebait** is when someone pings for a game, gets takers, then flakes.\n\n"
-            "**Call it out:** `/jebait @user <reason>`\n"
-            "The whole server becomes the **jury** — everyone votes 👍 Guilty / 👎 Innocent "
-            f"for {VOTE_WINDOW_SECONDS // 60} minutes. The accusation counts as the first guilty vote.\n"
-            f"If guilty leads by **{VERDICT_THRESHOLD}** when time's up, the jebait sticks. "
-            "Being offline can't convict you — only real votes do.\n\n"
-            "**Tallies:** `/jebaitcount @user` · `/jebaitboard`\n"
+            "**Accuse:** `/jebait @user <reason>`\n"
+            f"The server becomes the jury and votes Guilty or Innocent for {VOTE_WINDOW_SECONDS // 60} "
+            "minutes. The accusation is the first guilty vote.\n"
+            f"If Guilty leads by **{VERDICT_THRESHOLD}** at the end, the jebait sticks (a lopsided "
+            "verdict counts for more than one). Being offline can't convict you; only real votes do.\n\n"
+            "**Tallies:** `/jebaitcount @user`, `/jebaitboard`\n"
             "**Mods** can undo a bad verdict with `/unjebait @user`.\n\n"
-            f"You can't put the same person on trial twice within {COOLDOWN_SECONDS // 60} minutes."
+            f"You can't accuse the same person twice within {COOLDOWN_SECONDS // 60} minutes."
         ),
         color=discord.Color.orange(),
     )
@@ -379,7 +388,7 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
     else:
         print("[jebait] UNHANDLED COMMAND ERROR:", flush=True)
         traceback.print_exception(type(error), error, error.__traceback__)
-        msg = "Something went wrong — check the bot's console."
+        msg = "Something went wrong. Check the bot's console."
 
     if interaction.response.is_done():
         await interaction.followup.send(msg, ephemeral=True)

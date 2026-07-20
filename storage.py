@@ -60,8 +60,8 @@ def _user(data, user_id):
     return data["users"][uid]
 
 
-def add_jebait(data, target_id, accuser_id, reason):
-    """Add a confirmed jebait incident to a user and return it."""
+def add_jebait(data, target_id, accuser_id, reason, points=1):
+    """Add a confirmed jebait incident (worth `points`) to a user and return it."""
     user = _user(data, target_id)
     incident = {
         "id": data["next_id"],
@@ -69,6 +69,7 @@ def add_jebait(data, target_id, accuser_id, reason):
         "reason": reason,
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "status": "confirmed",
+        "points": points,
     }
     data["next_id"] += 1
     user["incidents"].append(incident)
@@ -76,11 +77,11 @@ def add_jebait(data, target_id, accuser_id, reason):
 
 
 def confirmed_count(data, user_id):
-    """Number of confirmed jebaits for a user."""
+    """A user's total jebait points (a decisive verdict is worth more than one)."""
     uid = str(user_id)
     if uid not in data["users"]:
         return 0
-    return sum(1 for i in data["users"][uid]["incidents"] if i["status"] == "confirmed")
+    return sum(i.get("points", 1) for i in data["users"][uid]["incidents"] if i["status"] == "confirmed")
 
 
 def leaderboard(data, limit=10):

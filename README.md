@@ -7,12 +7,12 @@ pings for a game in `looking-for-game`, gets takers, then flakes on them.
 
 Instead of a mod judging every case, the **server is the jury**:
 
-1. Someone runs `/jebait @user [reason]` — this puts the user on trial.
-2. The bot posts a message with **👍 Guilty** / **👎 Innocent** buttons that anyone can press. The
+1. Someone runs `/jebait @user <reason>` to put the user on trial.
+2. The bot posts a message with **Guilty** / **Innocent** buttons that anyone can press. The
    accuser's claim counts as the first guilty vote.
-3. Voting stays open for ~2 minutes with a live tally.
-4. When it closes, if **guilty leads by 2**, the jebait is confirmed (+1). Otherwise it's acquitted
-   and nothing is recorded.
+3. Voting stays open for ~2 minutes with a live tally of who voted which way.
+4. When it closes, if **guilty leads by 2** the jebait sticks (a lopsided verdict counts for more
+   than one). Otherwise it's acquitted and nothing is recorded.
 
 Why a jury? The people who actually got left hanging are the fairest judges — and being **offline can
 never auto-confirm** a jebait (silence proves nothing). No mod has to adjudicate.

@@ -10,24 +10,24 @@ import random
 
 # {accuser} = display name, {target} = mention
 ACCUSATION = [
-    "🎣 **{accuser}** says {target} pulled a jebait!",
-    "🎣 {target} stands accused of a jebait by **{accuser}**!",
-    "🎣 **{accuser}** is calling out {target} for a classic bait-and-bail!",
-    "🎣 Uh oh — **{accuser}** reckons {target} baited and ghosted!",
+    "**{accuser}** says {target} pulled a jebait.",
+    "{target} stands accused of a jebait by **{accuser}**.",
+    "**{accuser}** is calling out {target} for a bait-and-bail.",
+    "**{accuser}** reckons {target} baited and then ghosted.",
 ]
 
 # {target} = mention  (the jury voted guilty)
 VERDICT_GUILTY = [
-    "🔨 The jury has spoken — {target} is **guilty**.",
-    "🔨 {target} is going down. **Guilty** as charged.",
-    "🔨 Case closed: {target} **jebaited**, and the server saw it.",
+    "The jury finds {target} **guilty**.",
+    "{target} is **guilty** as charged.",
+    "Case closed. {target} jebaited, and the server saw it.",
 ]
 
 # {target} = mention  (not enough votes to convict)
 VERDICT_ACQUITTED = [
-    "🕊️ {target} walks free — not enough to convict.",
-    "🕊️ The jury isn't buying it. {target} is **acquitted**.",
-    "🕊️ Case dismissed. {target} lives to bait another day.",
+    "{target} walks free. Not enough to convict.",
+    "The jury isn't buying it. {target} is **acquitted**.",
+    "Case dismissed. {target} lives to bait another day.",
 ]
 
 
