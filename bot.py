@@ -11,6 +11,10 @@ Why a jury (not the accused's silence + a mod):
 - Being offline can never auto-confirm a jebait — only real votes do.
 - No mod has to adjudicate; the people who got left hanging decide.
 
+Timing: the vote closes at a FIXED time. We use our own asyncio timer as the
+primary resolver (a View's built-in timeout resets on every click, which would let
+the window drift), with the View's on_timeout as a backstop.
+
 Slash commands are registered ("synced") with Discord. GUILD_IDS in .env lists the
 servers to register them in instantly (blank = global, ~1h to appear).
 """
@@ -18,6 +22,7 @@ servers to register them in instantly (blank = global, ~1h to appear).
 import asyncio
 import os
 import time
+import traceback
 
 import discord
 from discord import app_commands
@@ -61,13 +66,13 @@ class JebaitBot(commands.Bot):
                     guild = discord.Object(id=int(gid))
                     self.tree.copy_global_to(guild=guild)
                     synced = await self.tree.sync(guild=guild)
-                    print(f"Synced {len(synced)} slash commands to guild {gid}.")
+                    print(f"Synced {len(synced)} slash commands to guild {gid}.", flush=True)
             else:
                 synced = await self.tree.sync()
-                print(f"Synced {len(synced)} slash commands globally (can take ~1h to appear).")
+                print(f"Synced {len(synced)} slash commands globally (~1h to appear).", flush=True)
         except Exception as e:
-            print(f"WARNING: could not sync slash commands: {e!r}")
-            print("Tip: make sure the bot was invited with the 'applications.commands' scope.")
+            print(f"WARNING: could not sync slash commands: {e!r}", flush=True)
+            print("Tip: make sure the bot was invited with the 'applications.commands' scope.", flush=True)
 
 
 bot = JebaitBot(command_prefix="!", intents=intents, allowed_mentions=allowed_mentions)
@@ -94,9 +99,10 @@ class JebaitJuryView(discord.ui.View):
 
     def __init__(self, origin: discord.Interaction, target: discord.Member,
                  accuser: discord.Member, reason: str):
-        # timeout=None: a View's built-in timeout RESETS on every click, so we run
-        # our own fixed-length timer (see start / _run) instead.
-        super().__init__(timeout=None)
+        # Numeric timeout (NOT None). The View timeout also resets on each click, so
+        # our asyncio timer (below) is the real, fixed deadline; on_timeout is a backstop
+        # that runs a bit later if the timer ever fails.
+        super().__init__(timeout=VOTE_WINDOW_SECONDS + 30)
         self.origin = origin          # the /jebait interaction — used to edit the message
         self.target = target
         self.accuser = accuser
@@ -105,25 +111,32 @@ class JebaitJuryView(discord.ui.View):
         # The accuser's claim IS the first guilty vote.
         self.votes = {accuser.id: "guilty"}
         self.deadline = int(time.time()) + VOTE_WINDOW_SECONDS
-        # Pick the headline once so it stays stable as the tally updates.
         self.headline = responses.pick(
             responses.ACCUSATION, accuser=accuser.display_name, target=target.mention
         )
 
     def start(self):
-        """Kick off the fixed-length voting timer, keeping a strong ref to the task."""
+        """Kick off the fixed-length voting timer (kept referenced so it isn't GC'd)."""
         print(f"[jury] trial started: {self.accuser.display_name} vs {self.target.display_name} "
-              f"— closes in {VOTE_WINDOW_SECONDS}s")
-        task = asyncio.create_task(self._run())
-        _pending_timers.add(task)
-        task.add_done_callback(_pending_timers.discard)
+              f"— closes in {VOTE_WINDOW_SECONDS}s", flush=True)
+        try:
+            task = asyncio.create_task(self._run())
+            _pending_timers.add(task)
+            task.add_done_callback(_pending_timers.discard)
+        except Exception as e:
+            # Don't let a timer hiccup break the command — on_timeout will still resolve it.
+            print(f"[jury] could not start timer: {e!r}", flush=True)
 
     async def _run(self):
         try:
             await asyncio.sleep(VOTE_WINDOW_SECONDS)
             await self.resolve()
         except Exception as e:
-            print(f"[jury] timer error for {self.target.display_name}: {e!r}")
+            print(f"[jury] timer error: {e!r}", flush=True)
+
+    async def on_timeout(self):
+        # Backstop: resolve even if the asyncio timer never fired.
+        await self.resolve()
 
     def _tally(self):
         guilty = sum(1 for v in self.votes.values() if v == "guilty")
@@ -172,7 +185,7 @@ class JebaitJuryView(discord.ui.View):
         guilty, innocent = self._tally()
         convicted = guilty - innocent >= VERDICT_THRESHOLD
         print(f"[jury] verdict for {self.target.display_name}: {guilty}-{innocent} -> "
-              f"{'GUILTY' if convicted else 'ACQUITTED'}")
+              f"{'GUILTY' if convicted else 'ACQUITTED'}", flush=True)
 
         if convicted:
             data = storage.load()
@@ -194,14 +207,14 @@ class JebaitJuryView(discord.ui.View):
         # Edit the trial message via the original interaction (token valid ~15 min).
         try:
             await self.origin.edit_original_response(content=content, view=self)
-        except discord.HTTPException as e:
-            print(f"[jury] could not edit verdict message: {e!r}")
+        except Exception as e:
+            print(f"[jury] could not edit verdict message: {e!r}", flush=True)
 
 
 @bot.event
 async def on_ready():
-    print(f"Logged in as {bot.user} (id: {bot.user.id})")
-    print("Jebait Bot is online.")
+    print(f"Logged in as {bot.user} (id: {bot.user.id})", flush=True)
+    print("Jebait Bot is online.", flush=True)
 
 
 @bot.tree.command(name="ping", description="Check the bot is alive.")
@@ -330,13 +343,14 @@ async def jebaithelp(interaction: discord.Interaction):
 
 @bot.tree.error
 async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
-    """Friendly handling for slash-command errors (e.g. permission failures)."""
+    """Friendly handling for slash-command errors, with a full traceback to the console."""
     if isinstance(error, app_commands.NoPrivateMessage):
         msg = "This command only works in a server, not in DMs."
     elif isinstance(error, app_commands.CheckFailure):
         msg = "You don't have permission to use that (mods only)."
     else:
-        print(f"Unhandled app command error: {error!r}")
+        print("[jebait] UNHANDLED COMMAND ERROR:", flush=True)
+        traceback.print_exception(type(error), error, error.__traceback__)
         msg = "Something went wrong — check the bot's console."
 
     if interaction.response.is_done():
