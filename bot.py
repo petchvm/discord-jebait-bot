@@ -115,10 +115,13 @@ class JebaitJuryView(discord.ui.View):
         self.reason = reason
         self.message = None          # the trial message, for editing on resolve
         self.resolved = False
-        self.votes = {accuser.id: "guilty"}   # the accuser's claim = first guilty vote
+        self.votes = {accuser.id: "guilty"}   # user_id -> "guilty" | "innocent"
+        self.names = {accuser.id: discord.utils.escape_markdown(accuser.display_name)}  # for showing who voted
         self.deadline = time.time() + VOTE_WINDOW_SECONDS
         self.headline = responses.pick(
-            responses.ACCUSATION, accuser=accuser.display_name, target=target.mention
+            responses.ACCUSATION,
+            accuser=discord.utils.escape_markdown(accuser.display_name),
+            target=target.mention,
         )
 
     def _tally(self):
@@ -129,15 +132,20 @@ class JebaitJuryView(discord.ui.View):
     def _reason_line(self):
         return f"\n> {self.reason}" if self.reason else ""
 
+    def _voters(self, side):
+        """Comma-separated names of everyone who voted a given side (or a dash if none)."""
+        names = [self.names.get(uid, "someone") for uid, v in self.votes.items() if v == side]
+        return ", ".join(names) if names else "—"
+
     def render(self):
         """The live voting message (updates as people vote)."""
         guilty, innocent = self._tally()
         return (
             f"⚖️ **The jury is out!**\n"
             f"{self.headline}{self._reason_line()}\n"
-            f"Vote below — **guilty must lead by {VERDICT_THRESHOLD}** when voting closes "
-            f"<t:{int(self.deadline)}:R>.\n\n"
-            f"👍 Guilty: **{guilty}**    👎 Innocent: **{innocent}**"
+            f"**{VOTE_WINDOW_SECONDS // 60} minutes** to vote — guilty must lead by {VERDICT_THRESHOLD} to convict.\n\n"
+            f"👍 **Guilty ({guilty}):** {self._voters('guilty')}\n"
+            f"👎 **Innocent ({innocent}):** {self._voters('innocent')}"
         )
 
     async def _cast(self, interaction: discord.Interaction, vote: str):
@@ -146,6 +154,7 @@ class JebaitJuryView(discord.ui.View):
             return
         # One vote per person; clicking again changes it.
         self.votes[interaction.user.id] = vote
+        self.names[interaction.user.id] = discord.utils.escape_markdown(interaction.user.display_name)
         await interaction.response.edit_message(content=self.render(), view=self)
 
     @discord.ui.button(label="Guilty", emoji="👍", style=discord.ButtonStyle.danger)
@@ -170,6 +179,7 @@ class JebaitJuryView(discord.ui.View):
         print(f"[jury] resolving {self.target.display_name}: {guilty}-{innocent} -> "
               f"{'GUILTY' if convicted else 'ACQUITTED'}", flush=True)
 
+        breakdown = f"👍 {self._voters('guilty')}\n👎 {self._voters('innocent')}"
         if convicted:
             data = storage.load()
             storage.add_jebait(
@@ -181,11 +191,15 @@ class JebaitJuryView(discord.ui.View):
             content = (
                 f"⚖️ **Verdict: GUILTY** — {guilty} to {innocent}\n"
                 f"{verdict}{self._reason_line()}\n"
+                f"{breakdown}\n"
                 f"That's **{count}** jebait{_s(count)} now."
             )
         else:
             verdict = responses.pick(responses.VERDICT_ACQUITTED, target=self.target.mention)
-            content = f"⚖️ **Verdict: ACQUITTED** — {guilty} to {innocent}\n{verdict}"
+            content = (
+                f"⚖️ **Verdict: ACQUITTED** — {guilty} to {innocent}\n"
+                f"{verdict}\n{breakdown}"
+            )
 
         if self.message is None:
             print("[jury] no message handle — can't update the trial message", flush=True)
